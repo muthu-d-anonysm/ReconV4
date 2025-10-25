@@ -1,0 +1,9 @@
+# Output/results directory
+.results/
+
+# Binaries
+reconv4
+
+# Logs, temp stuff
+*.log
+tmp/
