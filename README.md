@@ -92,8 +92,7 @@ Pull requests, issues, and feature requests are welcome! Please follow coding st
 ## License
 
 MIT License
-
+---
 
 *Developed by Muthu D for professional bug bounty hunters and security researchers.*
 
-```
