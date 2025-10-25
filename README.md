@@ -1,10 +1,4 @@
-<img src="https://r2cdn.perplexity.ai/pplx-full-logo-primary-dark%402x.png" style="height:64px;margin-right:32px"/>
 
-# but it looks like not good. i need same like this but updated info and commands. [https://github.com/muthu-d-anonysm/ReconV4](https://github.com/muthu-d-anonysm/ReconV4)
-
-Here is an updated README.md file in a style consistent with your existing [ReconV4 GitHub](https://github.com/muthu-d-anonysm/ReconV4) repo, but with refreshed content and accurate commands matching your latest tool updates:
-
-```markdown
 # ReconV4 - Comprehensive Reconnaissance Automation Tool
 
 ReconV4 is a professional reconnaissance automation framework designed for bug bounty hunters, security researchers, and penetration testers to automate subdomain enumeration, URL discovery, JavaScript secrets detection, cloud asset enumeration, vulnerability scanning, and more.
@@ -104,8 +98,3 @@ MIT License
 *Developed by Muthu D for professional bug bounty hunters and security researchers.*
 
 ```
-
-This updated README aligns with your tool's current capabilities, usage instructions, and output structure while maintaining your GitHub style.
-
-Save it as `README.md` and push alongside your source code for a well-documented project entry.
-
