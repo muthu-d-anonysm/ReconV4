@@ -1,6 +1,5 @@
-Here is a ready-to-use README.md template for your Reconv4 project that you can save and push to your GitHub repository:
 
-```markdown
+```
 # Reconv4 - Comprehensive Reconnaissance Automation Tool
 
 Reconv4 is an advanced reconnaissance automation tool designed for bug bounty hunting and security research. It integrates multiple open-source tools and custom logic to perform subdomain enumeration, live host detection, URL discovery, JavaScript secret scanning, cloud asset discovery, vulnerability scanning, and more.
