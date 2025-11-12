@@ -67,8 +67,8 @@ type SecretsFinding struct {
 }
 
 type SourceMapInfo struct {
-	FilePath    string `json:"file_path"`
-	OriginalURL string `json:"original_url"`
+	FilePath     string `json:"file_path"`
+	OriginalURL  string `json:"original_url"`
 	SourceMapURL string `json:"source_map_url"`
 }
 
@@ -132,14 +132,6 @@ func main() {
 		handleError("Phase 4.5", err, config)
 	}
 
-	if err := runPhase5(ctx, config, results); err != nil {
-		handleError("Phase 5", err, config)
-	}
-
-	if err := runPhase6(ctx, config, results); err != nil {
-		handleError("Phase 6", err, config)
-	}
-
 	if err := runPhase65(ctx, config, results); err != nil {
 		handleError("Phase 6.5", err, config)
 	}
@@ -153,6 +145,14 @@ func main() {
 	}
 
 	results.Duration = time.Since(config.StartTime).Round(time.Second).String()
+
+	// --- Auto-delete downloaded JS and map files (preserve sourcemaps folder) ---
+	if err := removeDownloadedJSAndMaps(config.OutputDir); err != nil {
+		// non-fatal: warn and continue
+		fmt.Fprintf(os.Stderr, "warning: cleanup failed: %v\n", err)
+	}
+	// ------------------------------------------------------------------------
+
 	saveResults(config, results)
 
 	printSummary(config, results)
@@ -261,7 +261,7 @@ func runPhase1(ctx context.Context, config *Config, results *ScanResults) error 
 			}
 
 			subs := strings.Split(strings.TrimSpace(output), "\n")
-			
+
 			rawFile := filepath.Join(subdomainDir, fmt.Sprintf("raw_%s.txt", t.name))
 			saveToFile(rawFile, subs)
 
@@ -399,19 +399,19 @@ func runPhase3(ctx context.Context, config *Config, results *ScanResults) error 
 	// Extract full URLs with schemes and save to live_hosts_urls.txt
 	liveHostURLs := []string{}
 	techStack := make(map[string]int)
-	
+
 	for _, line := range strings.Split(string(output), "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		
+
 		var data map[string]interface{}
 		if err := json.Unmarshal([]byte(line), &data); err == nil {
 			// Extract URL with scheme
 			if url, ok := data["url"].(string); ok {
 				liveHostURLs = append(liveHostURLs, url)
 			}
-			
+
 			// Extract tech stack
 			if techs, ok := data["tech"].([]interface{}); ok {
 				for _, tech := range techs {
@@ -422,11 +422,11 @@ func runPhase3(ctx context.Context, config *Config, results *ScanResults) error 
 			}
 		}
 	}
-	
+
 	// Save live URLs with schemes for URL crawlers
 	liveURLsFile := filepath.Join(httpxDir, "live_hosts_urls.txt")
 	saveToFile(liveURLsFile, liveHostURLs)
-	
+
 	results.TechStack = techStack
 
 	techFile := filepath.Join(httpxDir, "tech_stack.txt")
@@ -531,7 +531,7 @@ func runGau(ctx context.Context, config *Config, urlStr string) ([]string, error
 	if err != nil {
 		return nil, err
 	}
-	
+
 	urls := strings.Split(strings.TrimSpace(string(output)), "\n")
 	var filtered []string
 	for _, url := range urls {
@@ -549,7 +549,7 @@ func runWaybackurls(ctx context.Context, config *Config, urlStr string) ([]strin
 	if err != nil {
 		return nil, err
 	}
-	
+
 	urls := strings.Split(strings.TrimSpace(string(output)), "\n")
 	var filtered []string
 	for _, url := range urls {
@@ -565,15 +565,19 @@ func runKatana(ctx context.Context, config *Config, urlStr string) ([]string, er
 	cmd := exec.CommandContext(ctx, "katana",
 		"-u", urlStr,
 		"-jc",
-		"-d", "3",
+		"-d", "1",
 		"-silent",
-		"-c", fmt.Sprintf("%d", config.Concurrency/10),
+		"-c", fmt.Sprintf("%d", config.Concurrency/5),
+		"-rl", "200",
+		"-timeout", "15",
+		"-ct", "10",
 	)
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	urls := strings.Split(strings.TrimSpace(string(output)), "\n")
 	var filtered []string
 	for _, url := range urls {
@@ -583,6 +587,40 @@ func runKatana(ctx context.Context, config *Config, urlStr string) ([]string, er
 		}
 	}
 	return filtered, nil
+}
+
+func runSourceMapperDownloads(ctx context.Context, jsDir string) error {
+	sourceMapInfoFile := filepath.Join(jsDir, "sourcemaps", "sourcemap_urls.json")
+	data, err := ioutil.ReadFile(sourceMapInfoFile)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %v", sourceMapInfoFile, err)
+	}
+
+	var sourceMaps []SourceMapInfo
+	if err := json.Unmarshal(data, &sourceMaps); err != nil {
+		return fmt.Errorf("failed to parse sourcemap URLs JSON: %v", err)
+	}
+
+	sourcemapsDir := filepath.Join(jsDir, "sourcemaps")
+
+	for i, sm := range sourceMaps {
+		outputPath := filepath.Join(sourcemapsDir, fmt.Sprintf("test%d", i+1))
+		cmd := exec.CommandContext(ctx, "sourcemapper", "-url", sm.SourceMapURL, "-output", outputPath)
+
+		color.White("  [*] Downloading source map #%d: %s", i+1, sm.SourceMapURL)
+
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			color.Red("  [!] Failed to download sourcemap %s: %v", sm.SourceMapURL, err)
+			if len(output) > 0 {
+				color.Red("      Output: %s", string(output))
+			}
+		} else {
+			color.Green("  [✓] Successfully downloaded to %s", outputPath)
+		}
+	}
+
+	return nil
 }
 
 func runPhase45(ctx context.Context, config *Config, results *ScanResults) error {
@@ -620,19 +658,29 @@ func runPhase45(ctx context.Context, config *Config, results *ScanResults) error
 
 	sourceMaps := extractSourceMaps(ctx, downloadedFiles, jsDir)
 	results.SourceMaps = len(sourceMaps)
-	
+
+	// Save source map info with full URLs
 	// Save source map info with full URLs
 	if len(sourceMaps) > 0 {
 		sourceMapInfoFile := filepath.Join(jsDir, "sourcemaps", "sourcemap_urls.json")
 		jsonData, _ := json.MarshalIndent(sourceMaps, "", "  ")
 		ioutil.WriteFile(sourceMapInfoFile, jsonData, 0644)
 		color.Green("  Found %d source maps 🗺️", len(sourceMaps))
+
+		// Download source maps using sourcemapper tool
+		if err := runSourceMapperDownloads(ctx, jsDir); err != nil {
+			color.Red("  [!] sourcemapper download error: %v", err)
+		}
 	}
 
-	// Extract source map files for endpoint extraction
+	// Extract source map files for endpoint extraction (from sourcemapper output)
 	sourceMapFiles := []string{}
-	for _, sm := range sourceMaps {
-		sourceMapFiles = append(sourceMapFiles, sm.FilePath)
+	sourcemapsDir := filepath.Join(jsDir, "sourcemaps")
+	for i := range sourceMaps {
+		testFile := filepath.Join(sourcemapsDir, fmt.Sprintf("test%d", i+1))
+		if _, err := os.Stat(testFile); err == nil {
+			sourceMapFiles = append(sourceMapFiles, testFile)
+		}
 	}
 
 	endpoints := extractEndpoints(downloadedFiles, sourceMapFiles)
@@ -642,7 +690,7 @@ func runPhase45(ctx context.Context, config *Config, results *ScanResults) error
 
 	secrets := scanForSecrets(ctx, jsDir, secretsDir, downloadedFiles)
 	results.Secrets = len(secrets)
-	
+
 	// Save secrets with full file URLs
 	if len(secrets) > 0 {
 		secretsWithURLFile := filepath.Join(secretsDir, "secrets_with_urls.json")
@@ -752,32 +800,12 @@ func extractSourceMaps(ctx context.Context, jsFiles []string, jsDir string) []So
 					}
 				}
 
-				client := &http.Client{Timeout: 30 * time.Second}
-				resp, err := client.Get(mapURL)
-				if err != nil {
-					continue
-				}
-				defer resp.Body.Close()
-
-				if resp.StatusCode == 200 {
-					hash := md5.Sum([]byte(mapURL))
-					mapFile := filepath.Join(jsDir, "sourcemaps", hex.EncodeToString(hash[:])+".map")
-
-					out, err := os.Create(mapFile)
-					if err != nil {
-						continue
-					}
-					io.Copy(out, resp.Body)
-					out.Close()
-
-					ioutil.WriteFile(mapFile+".meta", []byte(mapURL), 0644)
-					
-					sourceMaps = append(sourceMaps, SourceMapInfo{
-						FilePath:     mapFile,
-						OriginalURL:  baseURL,
-						SourceMapURL: mapURL,
-					})
-				}
+				// Only save URL info, don't download .map file here
+				sourceMaps = append(sourceMaps, SourceMapInfo{
+					FilePath:     "",
+					OriginalURL:  baseURL,
+					SourceMapURL: mapURL,
+				})
 			}
 		}
 	}
@@ -1292,6 +1320,51 @@ func deduplicateStrings(input []string) []string {
 
 	sort.Strings(result)
 	return result
+}
+
+// removeDownloadedJSAndMaps deletes downloaded JS/.map/.meta files from the js_files dir
+// but preserves the "sourcemaps" subdirectory and everything inside it.
+func removeDownloadedJSAndMaps(outputDir string) error {
+	jsDir := filepath.Join(outputDir, "js_files")
+	// If jsDir doesn't exist, nothing to do
+	if _, err := os.Stat(jsDir); os.IsNotExist(err) {
+		return nil
+	}
+
+	err := filepath.WalkDir(jsDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// continue walking on error
+			return nil
+		}
+
+		// If this is a directory and it's the sourcemaps folder (or inside it), skip descending.
+		if d.IsDir() {
+			rel, _ := filepath.Rel(jsDir, path)
+			if rel == "sourcemaps" || strings.HasPrefix(rel, "sourcemaps"+string(os.PathSeparator)) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// If file is inside sourcemaps folder (redundant safety), skip it
+		if strings.Contains(path, string(os.PathSeparator)+"sourcemaps"+string(os.PathSeparator)) {
+			return nil
+		}
+
+		lower := strings.ToLower(path)
+		// Delete files that are .js, .map, or .meta (e.g. md5.js.meta)
+		if strings.HasSuffix(lower, ".js") || strings.HasSuffix(lower, ".map") || strings.HasSuffix(lower, ".meta") {
+			// Attempt removal; log but do not fail whole walk on error
+			if err := os.Remove(path); err != nil {
+				// best-effort: continue even if a file fails to delete
+				fmt.Fprintf(os.Stderr, "warning: failed to delete %s: %v\n", path, err)
+			}
+		}
+
+		return nil
+	})
+
+	return err
 }
 
 func getString(m map[string]interface{}, key string) string {
