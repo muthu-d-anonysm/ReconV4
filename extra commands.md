@@ -1,11 +1,1 @@
-nuclei \
-  -l live_hosts_urls.txt \
-  -j \
-  -o findings.json \
-  -tags cve,misconfig,exposure,takeover,cms,vuln,default-login \
-  -severity critical,high,medium \
-  -c 100 \
-  -rate-limit 150 \
-  -timeout 10 \
-  -retries 1 \
-  -silent
+nuclei -l live_hosts_urls.txt -j -o findings.json -tags cve,misconfig,exposure,takeover,cms,vuln,default-login -severity critical,high,medium -c 100 -rate-limit 150 -timeout 10 -retries 1 -silent
